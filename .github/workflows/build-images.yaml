@@ -34,14 +34,14 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           platforms: linux/amd64, linux/arm64
-          file: images/Dockerfile
+          file: devices/generic/Dockerfile
           tags: quay.io/jasperdekeuk/ubuntu:24.04-${{ github.sha }}
           push: true
 
   kairos:
     name: Kairos Factory (bootable image)
     needs: base
-    uses: jasperdekeuk/kairos-factory-action/.github/workflows/reusable-factory.yaml@main
+    uses: kairos-io/kairos-factory-action/.github/workflows/reusable-factory.yaml@main
     secrets:
       registry_username: ${{ secrets.REGISTRY_USERNAME }}
       registry_password: ${{ secrets.REGISTRY_PASSWORD }}
