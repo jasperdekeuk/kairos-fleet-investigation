@@ -27,7 +27,7 @@ on:
         type: string
         required: true
       kubernetes_distro:
-        description: 'Kubernetes distribution (k3s, k0s, kubeadm, or "list" to see options)'
+        description: 'Kubernetes distribution'
         required: true
         default: ''
         type: choice
