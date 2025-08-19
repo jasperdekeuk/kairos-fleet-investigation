@@ -39,6 +39,11 @@ on:
         required: true
         default: 'auto'
         type: string
+permissions:
+  contents: write
+  security-events: write
+  id-token: write
+  actions: read
 
 jobs:
   kairos:
