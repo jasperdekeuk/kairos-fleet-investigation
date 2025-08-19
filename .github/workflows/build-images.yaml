@@ -34,7 +34,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           platforms: linux/amd64, linux/arm64
-          file: devices/generic/Dockerfile
+          file: devices/generic/generic-x86/Dockerfile
           tags: quay.io/jasperdekeuk/ubuntu:24.04-${{ github.sha }}
           push: true
 
