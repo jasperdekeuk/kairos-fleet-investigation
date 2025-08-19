@@ -38,23 +38,23 @@ jobs:
           tags: quay.io/jasperdekeuk/ubuntu:24.04-${{ github.sha }}
           push: true
 
-  kairos:
-    name: Kairos Factory (bootable image)
-    needs: base
-    uses: kairos-io/kairos-factory-action/.github/workflows/reusable-factory.yaml@main
-    secrets:
-      registry_username: ${{ secrets.REGISTRY_USERNAME }}
-      registry_password: ${{ secrets.REGISTRY_PASSWORD }}
-    with:
-      base_image: quay.io/jasperdekeuk/ubuntu:24.04-${{ github.sha }}
-      model: "generic"
-      arch: "amd64"
-      version: "auto"
-      iso: true
-      grype: false
-      registry_domain: "quay.io"
-      registry_namespace: "jasperdekeuk"
-      summary_artifacts: true
-      kubernetes_distro: "k3s"
-      kubernetes_version: "v1.33.3+k3s1"
-#      cloud_config_path: nodes/test-node.yaml
+#  kairos:
+#    name: Kairos Factory (bootable image)
+#    needs: base
+#    uses: kairos-io/kairos-factory-action/.github/workflows/reusable-factory.yaml@main
+#    secrets:
+#      registry_username: ${{ secrets.REGISTRY_USERNAME }}
+#      registry_password: ${{ secrets.REGISTRY_PASSWORD }}
+#    with:
+#      base_image: quay.io/jasperdekeuk/ubuntu:24.04-${{ github.sha }}
+#      model: "generic"
+#      arch: "amd64"
+#      version: "auto"
+#      iso: true
+#      grype: false
+#      registry_domain: "quay.io"
+#      registry_namespace: "jasperdekeuk"
+#      summary_artifacts: true
+#      kubernetes_distro: "k3s"
+#      kubernetes_version: "v1.33.3+k3s1"
+##      cloud_config_path: nodes/test-node.yaml
