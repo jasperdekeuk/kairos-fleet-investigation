@@ -42,8 +42,8 @@ jobs:
       actions: read
       security-events: write
       models: none
-    name: ${{ inputs.custom_job_name_format != '' && inputs.custom_job_name_format || format('{0}-{1}-{2}-{3}{4}{5}', inputs.base_image, (inputs.kubernetes_distro != '' && 'standard' || 'core'), inputs.arch, inputs.model, (inputs.kubernetes_distro != '' && format('-{0}', inputs.kubernetes_distro) || ''), (inputs.trusted_boot && '-uki' || '')) }}
-    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    name: ${{ inputs.custom_job_name_format != '' && inputs.custom_job_name_format || format('{0}-{1}-{2}-{3}{4}{5}', github.event.inputs.base_image, (github.event.inputs.kubernetes_distro != '' && 'standard' || 'core'), github.event.inputs.architecture, (inputs.kubernetes_distro != '' && format('-{0}', inputs.kubernetes_distro) || ''), (inputs.trusted_boot && '-uki' || '')) }}
+    runs-on: ${{ github.event.inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -93,8 +93,8 @@ jobs:
           fi
 
           # Split base image for tag generation
-          BASE_IMAGE=$(echo "${{ inputs.base_image }}" | cut -d ':' -f 1)
-          BASE_TAG=$(echo "${{ inputs.base_image }}" | cut -d ':' -f 2 || echo 'latest')
+          BASE_IMAGE=$(echo "${{ github.event.inputs.base_image  }}" | cut -d ':' -f 1)
+          BASE_TAG=$(echo "${{ github.event.inputs.base_image  }}" | cut -d ':' -f 2 || echo 'latest')
 
           # Handle special cases for base images with slashes
           if [[ "$BASE_IMAGE" == *"/"* ]]; then
@@ -107,11 +107,6 @@ jobs:
             FLAVOR_RELEASE="$BASE_TAG"
           fi
 
-          # Special case for nvidia
-          if [[ "${{ inputs.model }}" == "nvidia-jetson-agx-orin" ]]; then
-            FLAVOR="ubuntu"
-            FLAVOR_RELEASE="22.04"
-          fi
 
           # Generate image tag
           # Replace + with - in kubernetes version for tag compatibility
@@ -124,8 +119,7 @@ jobs:
           fi
 
           # Define variables for tag generation
-          ARCH="${{ inputs.arch }}"
-          MODEL="${{ inputs.model }}"
+          ARCH="${{ github.event.inputs.architecture }}"
           KUBERNETES_DISTRO="${{ inputs.kubernetes_distro }}"
           UKI="$UKI_SUFFIX"
           COMMIT_SHA="${{ github.sha }}"
@@ -254,7 +248,7 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@master
         with:
-          platforms: linux/${{ inputs.arch }}
+          platforms: linux/${{ github.event.inputs.architecture }}
 
 
       - name: Build Kairos image
@@ -262,13 +256,13 @@ jobs:
         with:
           context: .
           file: ${{ env.DOCKERFILE_PATH }}
-          platforms: linux/${{ inputs.arch }}
+          platforms: linux/${{ github.event.inputs.architecture }}
           push: false
           load: true
           tags: ${{ steps.setup.outputs.image_tag }}
           labels: ${{ inputs.image_labels }}
           build-args: |
-            BASE_IMAGE=${{ inputs.base_image }}
+            BASE_IMAGE=${{ github.event.inputs.base_image  }}
             KUBERNETES_VERSION=${{ steps.setup.outputs.kubernetes_version }}
             KUBERNETES_DISTRO=${{ inputs.kubernetes_distro }}
             TRUSTED_BOOT=${{ inputs.trusted_boot }}
@@ -286,25 +280,24 @@ jobs:
         with:
           context: .
           file: ${{ env.DOCKERFILE_PATH }}
-          platforms: linux/${{ inputs.arch }}
+          platforms: linux/${{ github.event.inputs.architecture }}
           push: true
           sbom: true
           tags: ${{ steps.setup.outputs.image_tag }}
           labels: ${{ inputs.image_labels }}
           build-args: |
-            BASE_IMAGE=${{ inputs.base_image }}
+            BASE_IMAGE=${{ github.event.inputs.base_image  }}
             KUBERNETES_VERSION=${{ steps.setup.outputs.kubernetes_version }}
             KUBERNETES_DISTRO=${{ inputs.kubernetes_distro }}
             TRUSTED_BOOT=${{ inputs.trusted_boot }}
             VERSION=${{ steps.setup.outputs.version }}
 
       - name: Generate ISO artifact
-        if: inputs.iso && inputs.model == 'generic'
+        if: inputs.iso
         id: generate-iso
         shell: bash
         run: |
           echo "🔍 Debug: Starting ISO generation step"
-          echo "   Inputs: iso=${{ inputs.iso }}, model=${{ inputs.model }}"
           echo "   Image tag: ${{ steps.setup.outputs.image_tag }}"
 
           mkdir -p artifacts
@@ -400,9 +393,8 @@ jobs:
           echo "**Image:** \`${{ steps.setup.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Base Image: \`${{ inputs.base_image }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Model: \`${{ inputs.model }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Architecture: \`${{ inputs.arch }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Base Image: \`${{ github.event.inputs.base_image  }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Architecture: \`${{ github.event.inputs.architecture }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Variant: \`${{ steps.setup.outputs.variant }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Version: \`${{ steps.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
 
