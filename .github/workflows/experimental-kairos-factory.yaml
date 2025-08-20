@@ -1,0 +1,442 @@
+name: Build Kairos Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: 'The base docker image to build from (e.g. ubuntu:24.04 or bring-your-own)'
+        required: true
+        type: string
+      architecture:
+        description: 'Target architecture'
+        required: true
+        type: choice
+        options:
+            - 'amd64'
+            - 'arm64'
+
+      version:
+        description: 'The Kairos version you want to define the image'
+        type: string
+        required: true
+      kubernetes_distro:
+        description: 'Kubernetes distribution'
+        required: true
+        default: ''
+        type: choice
+        options:
+            - 'k3s'
+            - 'k0s'
+      kubernetes_version:
+        description: 'Kubernetes version (depends on distro e.g. v1.33.3+k3s1)'
+        required: true
+        default: 'auto'
+        type: string
+
+
+jobs:
+  build:
+    permissions:
+      id-token: write  # OIDC support
+      contents: write
+      actions: read
+      security-events: write
+      models: none
+    name: ${{ inputs.custom_job_name_format != '' && inputs.custom_job_name_format || format('{0}-{1}-{2}-{3}{4}{5}', inputs.base_image, (inputs.kubernetes_distro != '' && 'standard' || 'core'), inputs.arch, inputs.model, (inputs.kubernetes_distro != '' && format('-{0}', inputs.kubernetes_distro) || ''), (inputs.trusted_boot && '-uki' || '')) }}
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: '0'
+
+
+      - name: Setup environment
+        id: setup
+        shell: bash
+        run: |
+          # Determine variant based on kubernetes_distro
+          if [[ -n "${{ inputs.kubernetes_distro }}" ]]; then
+            VARIANT="standard"
+          else
+            VARIANT="core"
+          fi
+
+          # Handle version resolution
+          if [[ "${{ inputs.version }}" == "auto" ]]; then
+            VERSION=$(git describe --tags --dirty --always)
+            # Handle three cases:
+            # 1. No tags: 39d55d3 → v0.0.0-39d55d3
+            # 2. Dirty tag: v3.5.0-23-g94fe1d98 → keep as is
+            # 3. Clean tag: v3.5.0 → keep as is
+            if [[ "$VERSION" =~ ^[a-f0-9]+$ ]]; then
+              # Just a commit SHA (no tags), prefix with v0.0.0-
+              VERSION="v0.0.0-$VERSION"
+            fi
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          if [[ "${{ inputs.kairos_version }}" == "auto" ]]; then
+            KAIROS_VERSION=$VERSION
+          elif [[ "${{ inputs.kairos_version }}" != "" ]]; then
+            KAIROS_VERSION="${{ inputs.kairos_version }}"
+          fi
+          echo "KAIROS_VERSION=$KAIROS_VERSION" >> $GITHUB_ENV
+
+          # Handle kubernetes version resolution
+          if [[ "${{ inputs.kubernetes_version }}" == "auto" ]]; then
+            KUBERNETES_VERSION=""
+          else
+            KUBERNETES_VERSION="${{ inputs.kubernetes_version }}"
+          fi
+
+          # Split base image for tag generation
+          BASE_IMAGE=$(echo "${{ inputs.base_image }}" | cut -d ':' -f 1)
+          BASE_TAG=$(echo "${{ inputs.base_image }}" | cut -d ':' -f 2 || echo 'latest')
+
+          # Handle special cases for base images with slashes
+          if [[ "$BASE_IMAGE" == *"/"* ]]; then
+            DISTRO=$(echo "$BASE_IMAGE" | cut -d '/' -f 1)
+            SUB_DISTRO=$(echo "$BASE_IMAGE" | cut -d '/' -f 2)
+            FLAVOR="$DISTRO"
+            FLAVOR_RELEASE="$SUB_DISTRO-$BASE_TAG"
+          else
+            FLAVOR="$BASE_IMAGE"
+            FLAVOR_RELEASE="$BASE_TAG"
+          fi
+
+          # Special case for nvidia
+          if [[ "${{ inputs.model }}" == "nvidia-jetson-agx-orin" ]]; then
+            FLAVOR="ubuntu"
+            FLAVOR_RELEASE="22.04"
+          fi
+
+          # Generate image tag
+          # Replace + with - in kubernetes version for tag compatibility
+          SANITIZED_KUBERNETES_VERSION=$(echo "$KUBERNETES_VERSION" | sed 's/+/-/g')
+
+          # Set UKI suffix if trusted boot is enabled
+          UKI_SUFFIX=""
+          if [[ "${{ inputs.trusted_boot }}" == "true" ]]; then
+            UKI_SUFFIX="-uki"
+          fi
+
+          # Define variables for tag generation
+          ARCH="${{ inputs.arch }}"
+          MODEL="${{ inputs.model }}"
+          KUBERNETES_DISTRO="${{ inputs.kubernetes_distro }}"
+          UKI="$UKI_SUFFIX"
+          COMMIT_SHA="${{ github.sha }}"
+
+          # Generate default tag
+          if [[ -n "$KUBERNETES_VERSION" ]]; then
+            DEFAULT_TAG="$FLAVOR_RELEASE-$VARIANT-$ARCH-$MODEL-$VERSION-$KUBERNETES_DISTRO-$SANITIZED_KUBERNETES_VERSION$UKI"
+          else
+            DEFAULT_TAG="$FLAVOR_RELEASE-$VARIANT-$ARCH-$MODEL-$VERSION$UKI"
+          fi
+
+          # Use custom tag format if provided, otherwise use default
+          if [[ -n "${{ inputs.custom_tag_format }}" ]]; then
+            # Shell will automatically expand variables in the format
+            TAG="${{ inputs.custom_tag_format }}"
+          else
+            TAG="$DEFAULT_TAG"
+          fi
+
+          # Determine registry, namespace, and repository
+          REGISTRY="${{ inputs.registry_domain }}"
+          NAMESPACE="${{ inputs.registry_namespace }}"
+
+          # Use registry_repository if specified, otherwise use FLAVOR
+          if [[ -n "${{ inputs.registry_repository }}" ]]; then
+            REPOSITORY="${{ inputs.registry_repository }}"
+          else
+            REPOSITORY="$FLAVOR"
+          fi
+
+          IMAGE_TAG=""
+          # Build image tag
+          if [[ -n "$REGISTRY" ]]; then
+            IMAGE_TAG="$REGISTRY/"
+          fi
+          if [[ -n "$NAMESPACE" ]]; then
+            IMAGE_TAG="$IMAGE_TAG$NAMESPACE/"
+          fi
+          if [[ -n "$REPOSITORY" ]]; then
+            IMAGE_TAG="$IMAGE_TAG$REPOSITORY:"
+          fi
+          IMAGE_TAG="$IMAGE_TAG$TAG"
+
+          echo "IMAGE_NAME=$IMAGE_TAG" >> $GITHUB_ENV
+
+          # Generate artifact name
+          if [[ -n "${{ inputs.custom_artifact_format }}" ]]; then
+            # Shell will automatically expand variables in the format
+            ARTIFACT_NAME="${{ inputs.custom_artifact_format }}"
+          else
+            # Generate default artifact name format
+            DEFAULT_ARTIFACT_NAME="kairos-$FLAVOR_RELEASE-$VARIANT-$ARCH-$MODEL-$VERSION"
+
+            # Append kubernetes distro and version if defined
+            if [[ -n "$KUBERNETES_DISTRO" ]]; then
+              DEFAULT_ARTIFACT_NAME="$DEFAULT_ARTIFACT_NAME-$KUBERNETES_DISTRO-$SANITIZED_KUBERNETES_VERSION"
+            fi
+
+            # Append UKI suffix if trusted boot is enabled
+            DEFAULT_ARTIFACT_NAME="$DEFAULT_ARTIFACT_NAME$UKI"
+
+            ARTIFACT_NAME="$DEFAULT_ARTIFACT_NAME"
+          fi
+
+          # Use keys_dir if specified
+          if [[ -n "${{ inputs.keys_dir }}" ]]; then
+            KEYS_DIR="${{ inputs.keys_dir }}"
+          else
+            KEYS_DIR=""
+          fi
+
+          # Use sysext_dir if specified
+          if [[ -n "${{ inputs.sysext_dir }}" ]]; then
+            SYSEXT_DIR="${{ inputs.sysext_dir }}"
+          else
+            SYSEXT_DIR=""
+          fi
+
+          # Use single_efi_cmdline if specified
+          if [[ -n "${{ inputs.single_efi_cmdline }}" ]]; then
+            SINGLE_EFI_CMDLINE="${{ inputs.single_efi_cmdline }}"
+          else
+            SINGLE_EFI_CMDLINE=""
+          fi
+
+          # Export variables
+          echo "variant=$VARIANT" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "kubernetes_version=$KUBERNETES_VERSION" >> $GITHUB_OUTPUT
+          echo "kubernetes_distro=$KUBERNETES_DISTRO" >> $GITHUB_OUTPUT
+          echo "flavor=$FLAVOR" >> $GITHUB_OUTPUT
+          echo "flavor_release=$FLAVOR_RELEASE" >> $GITHUB_OUTPUT
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "keys_dir=$KEYS_DIR" >> $GITHUB_OUTPUT
+          echo "sysext_dir=$SYSEXT_DIR" >> $GITHUB_OUTPUT
+          echo "single_efi_cmdline=$SINGLE_EFI_CMDLINE" >> $GITHUB_OUTPUT
+
+          echo "🔧 Environment setup complete"
+          echo "   Variant: $VARIANT"
+          echo "   Version: $VERSION"
+          echo "   Registry: $REGISTRY"
+          echo "   Namespace: $NAMESPACE"
+          echo "   Repository: $REPOSITORY"
+          echo "   Default Tag: $DEFAULT_TAG"
+          if [[ -n "${{ inputs.custom_tag_format }}" ]]; then
+            echo "   Custom Tag Format: ${{ inputs.custom_tag_format }}"
+          fi
+          if [[ -n "${{ inputs.custom_artifact_format }}" ]]; then
+            echo "   Custom Artifact Format: ${{ inputs.custom_artifact_format }}"
+            echo "   Artifact Name: $ARTIFACT_NAME"
+          fi
+          if [[ -n "${{ inputs.keys_dir }}" ]]; then
+            echo "   Keys Dir: ${{ inputs.keys_dir }}"
+          fi
+          if [[ -n "${{ inputs.sysext_dir }}" ]]; then
+            echo "   Sysext Dir: ${{ inputs.sysext_dir }}"
+          fi
+          if [[ -n "${{ inputs.single_efi_cmdline }}" ]]; then
+            echo "   Single EFI Cmdline: ${{ inputs.single_efi_cmdline }}"
+          fi
+          echo "   Final Tag: $TAG"
+          echo "   Image Tag: $IMAGE_TAG"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@master
+        with:
+          platforms: linux/${{ inputs.arch }}
+
+
+      - name: Build Kairos image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          platforms: linux/${{ inputs.arch }}
+          push: false
+          load: true
+          tags: ${{ steps.setup.outputs.image_tag }}
+          labels: ${{ inputs.image_labels }}
+          build-args: |
+            BASE_IMAGE=${{ inputs.base_image }}
+            KUBERNETES_VERSION=${{ steps.setup.outputs.kubernetes_version }}
+            KUBERNETES_DISTRO=${{ inputs.kubernetes_distro }}
+            TRUSTED_BOOT=${{ inputs.trusted_boot }}
+            VERSION=${{ steps.setup.outputs.version }}
+
+
+
+
+
+
+
+      - name: Push Kairos image (build and push with SBOM)
+        if: inputs.registry_domain != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          platforms: linux/${{ inputs.arch }}
+          push: true
+          sbom: true
+          tags: ${{ steps.setup.outputs.image_tag }}
+          labels: ${{ inputs.image_labels }}
+          build-args: |
+            BASE_IMAGE=${{ inputs.base_image }}
+            KUBERNETES_VERSION=${{ steps.setup.outputs.kubernetes_version }}
+            KUBERNETES_DISTRO=${{ inputs.kubernetes_distro }}
+            TRUSTED_BOOT=${{ inputs.trusted_boot }}
+            VERSION=${{ steps.setup.outputs.version }}
+
+      - name: Generate ISO artifact
+        if: inputs.iso && inputs.model == 'generic'
+        id: generate-iso
+        shell: bash
+        run: |
+          echo "🔍 Debug: Starting ISO generation step"
+          echo "   Inputs: iso=${{ inputs.iso }}, model=${{ inputs.model }}"
+          echo "   Image tag: ${{ steps.setup.outputs.image_tag }}"
+
+          mkdir -p artifacts
+          echo "   Using image: ${{ steps.setup.outputs.image_tag }}"
+
+          echo "📦 Building ISO ..."
+            DOCKER_CMD="docker run --rm -v /var/run/docker.sock:/var/run/docker.sock"
+            DOCKER_CMD="$DOCKER_CMD -v $PWD/artifacts:/output"
+
+            DOCKER_CMD="$DOCKER_CMD quay.io/kairos/auroraboot:${{ inputs.auroraboot_version }} --debug"
+            if [[ "${{ inputs.trusted_boot }}" == "true" ]]; then
+              DOCKER_CMD="$DOCKER_CMD build-uki"
+            else
+              DOCKER_CMD="$DOCKER_CMD build-iso"
+            fi
+            ## auroraboot flags
+            if [[ "${{ inputs.trusted_boot }}" == "true" ]]; then
+              DOCKER_CMD="$DOCKER_CMD --output-dir /output/"
+            else
+              DOCKER_CMD="$DOCKER_CMD --output /output/"
+            fi
+
+            if [[ "${{ inputs.trusted_boot }}" == "true" ]]; then
+              DOCKER_CMD="$DOCKER_CMD --output-type=iso"
+              DOCKER_CMD="$DOCKER_CMD --public-keys /keys"
+              DOCKER_CMD="$DOCKER_CMD --tpm-pcr-private-key /keys/tpm2-pcr-private.pem"
+              DOCKER_CMD="$DOCKER_CMD --sb-key /keys/db.key --sb-cert /keys/db.pem"
+
+              if [[ -n "${{ inputs.single_efi_cmdline }}" ]]; then
+                DOCKER_CMD="$DOCKER_CMD --single-efi-cmdline=\"${{ inputs.single_efi_cmdline }}\""
+              fi
+
+              if [[ -n "${{ inputs.sysext_dir }}" ]]; then
+                DOCKER_CMD="$DOCKER_CMD --overlay-iso /overlay"
+              fi
+            fi
+
+            # Append cloud-config flag if provided
+            if [[ -n "$CLOUD_CONFIG_ARG" ]]; then
+              DOCKER_CMD="$DOCKER_CMD
+            fi
+
+            DOCKER_CMD="$DOCKER_CMD docker:${{ steps.setup.outputs.image_tag }}"
+
+            echo "🔧 Executing: $DOCKER_CMD"
+            eval $DOCKER_CMD
+
+
+          ISO_FILE=$(ls artifacts/*.iso | head -1)
+          if [[ -n "$ISO_FILE" ]]; then
+            echo "✅ ISO generated: $ISO_FILE"
+          else
+            echo "❌ Error: No ISO file found in artifacts directory"
+            echo "   Artifacts directory contents:"
+            ls -la artifacts/ || echo "   Artifacts directory is empty or doesn't exist"
+            exit 1
+          fi
+
+
+
+
+
+
+      - name: GitHub Release
+        if: inputs.release
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        with:
+          files: |
+            artifacts/*.iso
+            artifacts/*.iso.sha256
+            artifacts/*.iso.sha256.sig
+      - name: List Release Artifacts
+        if: inputs.list_release_artifacts
+        shell: bash
+        run: |
+          echo "## 🏭 Kairos Factory Release Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          for artifact in artifacts/*.iso artifacts/*.raw artifacts/*.vhd artifacts/*.tar; do
+            if [[ -f "$artifact" ]]; then
+              echo "- \`$(basename "$artifact")\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+
+
+      - name: Generate GitHub summary
+        if: inputs.summary_artifacts
+        shell: bash
+        run: |
+          echo "## 🏭 Kairos Factory Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ steps.setup.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Base Image: \`${{ inputs.base_image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Model: \`${{ inputs.model }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Architecture: \`${{ inputs.arch }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Variant: \`${{ steps.setup.outputs.variant }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: \`${{ steps.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -n "${{ inputs.kubernetes_distro }}" ]]; then
+            echo "- Kubernetes: \`${{ inputs.kubernetes_distro }}\` \`${{ steps.setup.outputs.kubernetes_version }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "${{ inputs.trusted_boot }}" == "true" ]]; then
+            echo "- Trusted Boot: ✅ Enabled" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Generated Artifacts:**" >> $GITHUB_STEP_SUMMARY
+
+          ARTIFACT_COUNT=0
+          for artifact in artifacts/*.iso artifacts/*.raw artifacts/*.vhd artifacts/*.tar; do
+            if [[ -f "$artifact" ]]; then
+              echo "- \`$(basename "$artifact")\`" >> $GITHUB_STEP_SUMMARY
+              ARTIFACT_COUNT=$((ARTIFACT_COUNT + 1))
+            fi
+          done
+
+          if [[ $ARTIFACT_COUNT -eq 0 ]]; then
+            echo "- No artifacts generated" >> $GITHUB_STEP_SUMMARY
+          fi
+
+
+
+      - name: Upload ISO artifacts
+        if: inputs.iso
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.setup.outputs.artifact_name }}.iso.zip
+          path: |
+            artifacts/*.iso
+            artifacts/*.sha256
+          if-no-files-found: error
