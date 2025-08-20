@@ -42,7 +42,7 @@ jobs:
       actions: read
       security-events: write
       models: none
-    name: ${{ inputs.custom_job_name_format != '' && inputs.custom_job_name_format || format('{0}-{1}-{2}-{3}{4}{5}', github.event.inputs.base_image, (github.event.inputs.kubernetes_distro != '' && 'standard' || 'core'), github.event.inputs.architecture, (inputs.kubernetes_distro != '' && format('-{0}', inputs.kubernetes_distro) || ''), (inputs.trusted_boot && '-uki' || '')) }}
+    name: ${{ github.event.inputs.base_image, (github.event.inputs.kubernetes_distro != '' && 'standard' || 'core'), github.event.inputs.architecture, (inputs.kubernetes_distro != '' && format('-{0}', inputs.kubernetes_distro) || ''), (inputs.trusted_boot && '-uki' || '')) }}
     runs-on: ${{ github.event.inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     steps:
       - name: Checkout source
