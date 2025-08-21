@@ -8,16 +8,13 @@ on:
         required: true
         type: string
         default: 'quay.io'
-      registry_namespace:
-        description: 'ns'
-        required: true
-        type: string
-        default: 'kairos'
-      registry_repo:
-        description: 'repo'
+
+      base_image:
+        description: 'The base docker image to build from (e.g. ubuntu:24.04 or bring-your-own)'
         required: true
         type: string
         default: 'ubuntu:22.04-core-arm64-nvidia-jetson-agx-orin-v3.5.0'
+
       architecture:
         description: 'Target architecture'
         required: true
