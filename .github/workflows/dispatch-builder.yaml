@@ -60,6 +60,9 @@ jobs:
   kairos:
     name: Kairos Factory (bootable image)
     uses: kairos-io/kairos-factory-action/.github/workflows/reusable-factory.yaml@main
+    secrets:
+      registry_username: ${{ secrets.REGISTRY_USERNAME }}
+      registry_password: ${{ secrets.REGISTRY_PASSWORD }}
     with:
 #      base_image: ${{ github.event.inputs.base_image }}
       arch: ${{ github.event.inputs.architecture }}
