@@ -3,10 +3,21 @@ name: Build Kairos Fleet
 on:
   workflow_dispatch:
     inputs:
-      base_image:
-        description: 'The base docker image to build from (e.g. ubuntu:24.04 or bring-your-own)'
+      registry_domain:
+        description: 'The domain'
         required: true
         type: string
+        default: 'quay.io'
+      registry_namespace:
+        description: 'ns'
+        required: true
+        type: string
+        default: 'kairos'
+      registry_repo:
+        description: 'repo'
+        required: true
+        type: string
+        default: 'ubuntu:22.04-core-arm64-nvidia-jetson-agx-orin-v3.5.0'
       architecture:
         description: 'Target architecture'
         required: true
@@ -50,7 +61,7 @@ jobs:
     name: Kairos Factory (bootable image)
     uses: kairos-io/kairos-factory-action/.github/workflows/reusable-factory.yaml@main
     with:
-      base_image: ${{ github.event.inputs.base_image }}
+#      base_image: ${{ github.event.inputs.base_image }}
       arch: ${{ github.event.inputs.architecture }}
       model: ${{ github.event.inputs.model }}
       version: ${{ github.event.inputs.version }}
@@ -59,3 +70,6 @@ jobs:
       summary_artifacts: true
       kubernetes_distro: ${{ github.event.inputs.kubernetes_distro }}
       kubernetes_version: ${{ github.event.inputs.kubernetes_version }}
+      registry_domain: ${{ github.event.inputs.registry_domain }}
+      registry_namespace: ${{ github.event.inputs.registry_namespace }}
+      registry_repository: ${{ github.event.inputs.registry_repo }}
